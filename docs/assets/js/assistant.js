@@ -6,6 +6,7 @@ document.addEventListener('DOMContentLoaded', function() {
     var logopath = "../../assets/logo.png";
     let pathName = window.document.location.pathname;  
     let paths = pathName.replace(/^\/|\/$/g, '').split('/');
+    var versionInfo = '/' + paths.slice(0, 2).join('/');
     if (paths.length == 2){
         logopath = "assets/logo.png";
     } 
@@ -245,7 +246,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     data.sources.forEach(source => {
                         const link = document.createElement('a');
                         link.textContent = source.text;
-                        link.href = source.href;
+                        link.href = versionInfo + source.href;
                         link.target = '_blank'
                         source_box.appendChild(link);
                     });
