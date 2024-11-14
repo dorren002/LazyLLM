@@ -9,6 +9,7 @@ from lazyllm.launcher import cleanup
 from unittest.mock import MagicMock
 import unittest
 
+lazyllm.config.add("data_path",str, "C:\\Users\\wenduren\\.lazyllm\\data", "DATA_PATH")
 
 class TestDocImpl(unittest.TestCase):
 
