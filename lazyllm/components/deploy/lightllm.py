@@ -40,6 +40,8 @@ class Lightllm(LazyLLMDeployBase):
         self.kw = ArgsDict({
             'tp': 1,
             'max_total_token_num': 64000,
+            'max_req_input_len': 8196,
+            'max_req_total_len': 9220,
             'eos_id': 2,
             'port': None,
             'host': '0.0.0.0',

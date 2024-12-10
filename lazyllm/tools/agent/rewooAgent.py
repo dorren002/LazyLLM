@@ -1,5 +1,5 @@
 from lazyllm.module import ModuleBase
-from lazyllm import pipeline, package, LOG, globals, bind
+from lazyllm import pipeline, package, LOG, globals, bind, _0
 from .toolsManager import ToolManager
 from typing import List, Dict, Union
 import re
@@ -9,26 +9,51 @@ P_PROMPT_PREFIX = ("For the following tasks, make plans that can solve the probl
                    "evidence. You can store the evidence into a variable #E that can be called by "
                    "later tools. (Plan, #E1, Plan, #E2, Plan, #E3...) \n\n")
 
-P_FEWSHOT = """For example,
-Task: Thomas, Toby, and Rebecca worked a total of 157 hours in one week. Thomas worked x
-hours. Toby worked 10 hours less than twice what Thomas worked, and Rebecca worked 8 hours
-less than Toby. How many hours did Rebecca work?
-Plan: Given Thomas worked x hours, translate the problem into algebraic expressions and solve
-with Wolfram Alpha.
-#E1 = WolframAlpha[Solve x + (2x − 10) + ((2x − 10) − 8) = 157]
-Plan: Find out the number of hours Thomas worked.
-#E2 = LLM[What is x, given #E1]
-Plan: Calculate the number of hours Rebecca worked.
-#E3 = Calculator[(2 ∗ #E2 − 10) − 8]"""
+# P_FEWSHOT = """For example,
+# Task: Thomas, Toby, and Rebecca worked a total of 157 hours in one week. Thomas worked x
+# hours. Toby worked 10 hours less than twice what Thomas worked, and Rebecca worked 8 hours
+# less than Toby. How many hours did Rebecca work?
+# Plan: Given Thomas worked x hours, translate the problem into algebraic expressions and solve
+# with Wolfram Alpha.
+# #E1 = WolframAlpha[Solve x + (2x − 10) + ((2x − 10) − 8) = 157]
+# Plan: Find out the number of hours Thomas worked.
+# #E2 = LLM[What is x, given #E1]
+# Plan: Calculate the number of hours Rebecca worked.
+# #E3 = Calculator[(2 ∗ #E2 − 10) − 8]"""
+P_FEWSHOT = """For example
+Example 1:
+Query: What is diverter in lazyllm?
+Task: get the definition of diverter in lazyllm.
+Task-classification: Concept and Definition
+Plan: Search for the context contains diverter in documentation.
+#E1 = keywordSearchWorker[diverter]
+Plan: Find the api reference documents related to diverter.
+#E2 = semanticSearchWorker[definition of diverter]
 
-P_PROMPT_SUFFIX = ("Begin! Describe your plans with rich details. Each Plan should be followed by only one #E.\n\n")
+Example 2:
+Query: 如何使用lazyllm实现一个带意图识别的RAG聊天机器人?
+Task: provide an example code of a retrieval-augmented generation (RAG) chatbot with intent recognition.
+Task-classification: Code Implementation
+Plan: Find the document contains keyword RAG chatbot and intent recognition.
+#E1 = keywordSearchWorker[retrieval-augmented generation (RAG) chatbot, intent recognition]
+Plan: Collect the existing documents related to RAG chatbot and intent recognition.
+#E2 = semanticSearchWorker[retrieval-augmented generation (RAG) chatbot with intent recognition]
+"""
 
-S_PROMPT_PREFIX = ("Solve the following task or problem. To assist you, we provide some plans and "
-                   "corresponding evidences that might be helpful. Notice that some of these information "
-                   "contain noise so you should trust them with caution.\n\n")
+P_PROMPT_SUFFIX = ("Begin! Describe your plans with rich details. Each Plan should be followed by only one #E."
+                   "The output should strictly follow the format of Examples and ensure you used both keyword search and semantic search tools. "
+                   "DO NOT change the spelling of any word in the user query when your're planning. \n\n")
 
-S_PROMPT_SUFFIX = ("\nNow begin to solve the task or problem. Respond with "
-                   "the answer directly with no extra words.\n\n")
+S_PROMPT_PREFIX = ("You are a nice and helpful Q&A assistant who is part of the lazyllm team."
+                   "You need to provide your answers based on the given context and questions."
+                   "Solve the problem based on the corresponding plans that you have made and the evidences that you have found.\n\n"
+                   "Notice that some of these information contain noise so you should trust them with caution.\n\n")
+
+S_PROMPT_SUFFIX = ("\nNow begin to solve the task or problem. "
+                   "Respond with the solution without too much detail but ensure it is correct. "
+                   "When needed, respond the full code rather than just a snippet, Remenber you cannot use external library rather than lazyllm. "
+                   "The user means lazyllm when mentioned lazy. "
+                   "If you have no idea about the solution, please tell the truth\n\n")
 
 class ReWOOAgent(ModuleBase):
     def __init__(self, llm: Union[ModuleBase, None] = None, tools: List[str] = [], *,
@@ -55,13 +80,14 @@ class ReWOOAgent(ModuleBase):
         prompt = P_PROMPT_PREFIX + "Tools can be one of the following:\n"
         for name in self._workers:
             prompt += f"{name}[search query]: {self._tools_manager[name].description}\n"
-        prompt += P_FEWSHOT + "\n" + P_PROMPT_SUFFIX + input + "\n"
+        rewrited_query = globals["global_parameters"]["rewrite_query"]
+        prompt += P_FEWSHOT + "\n" + P_PROMPT_SUFFIX + rewrited_query + "\n"
         LOG.info(f"planner prompt: {prompt}")
         globals['chat_history'][self._planner._module_id] = []
         return prompt
 
     def _parse_plan(self, response: str):
-        LOG.debug(f"planner plans: {response}")
+        LOG.info(f"planner plans: {response}")
         plans = []
         evidence = {}
         for line in response.splitlines():
@@ -77,6 +103,7 @@ class ReWOOAgent(ModuleBase):
         return package(plans, evidence)
 
     def _get_worker_evidences(self, plans: List[str], evidence: Dict[str, str]):
+        globals["global_parameters"]["state"] = "solving"
         worker_evidences = {}
         for e, tool_call in evidence.items():
             if "[" not in tool_call:
@@ -103,6 +130,7 @@ class ReWOOAgent(ModuleBase):
     def _build_solver_prompt(self, worker_log, input):
         prompt = S_PROMPT_PREFIX + input + "\n" + worker_log + S_PROMPT_SUFFIX + input + "\n"
         globals['chat_history'][self._solver._module_id] = []
+        globals["global_parameters"]["state"] = "generating"
         return prompt
 
     def forward(self, query: str):
