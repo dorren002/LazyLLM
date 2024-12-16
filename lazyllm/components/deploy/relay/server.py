@@ -15,8 +15,13 @@ import asyncio
 from functools import partial
 
 from fastapi import FastAPI, Request
+from starlette.responses import JSONResponse
+from starlette.middleware.exceptions import ExceptionMiddleware
 from fastapi.responses import Response, StreamingResponse
 import requests
+
+from lazyrag.common.log import logging
+logger = logging.getLogger(__name__)
 
 # TODO(sunxiaoye): delete in the future
 lazyllm_module_dir = os.path.abspath(__file__)
@@ -35,6 +40,13 @@ parser.add_argument("--after_function")
 parser.add_argument("--pythonpath")
 args = parser.parse_args()
 
+async def general_exception_handler(request: Request, e: Exception):
+    logger.exception(f"异常堆栈数据: {e}")
+    return JSONResponse(
+        status_code=500,
+        content={"code": 500, "msg": str(e)},
+    )
+    
 def load_func(f):
     return cloudpickle.loads(base64.b64decode(f.encode('utf-8')))
 
@@ -49,6 +61,7 @@ if args.after_function:
 
 
 app = FastAPI()
+app.add_middleware(ExceptionMiddleware, handlers={Exception: general_exception_handler})
 FastapiApp.update()
 
 async def async_wrapper(func, *args, **kwargs):
