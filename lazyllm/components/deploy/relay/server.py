@@ -8,7 +8,7 @@ import inspect
 import traceback
 from types import GeneratorType
 from lazyllm import kwargs, package
-from lazyllm import FastapiApp, globals, decode_request
+from lazyllm import FastapiApp, globals, decode_request, LOG
 import pickle
 import codecs
 import asyncio
@@ -20,8 +20,6 @@ from starlette.middleware.exceptions import ExceptionMiddleware
 from fastapi.responses import Response, StreamingResponse
 import requests
 
-from lazyrag.common.log import logging
-logger = logging.getLogger(__name__)
 
 # TODO(sunxiaoye): delete in the future
 lazyllm_module_dir = os.path.abspath(__file__)
@@ -41,7 +39,7 @@ parser.add_argument("--pythonpath")
 args = parser.parse_args()
 
 async def general_exception_handler(request: Request, e: Exception):
-    logger.exception(f"异常堆栈数据: {e}")
+    LOG.exception(f"异常堆栈数据: {e}")
     return JSONResponse(
         status_code=500,
         content={"code": 500, "msg": str(e)},
