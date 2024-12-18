@@ -88,6 +88,10 @@ class DocNode:
         return (not self.parent)
 
     @property
+    def is_root_node(self) -> bool:
+        return (not self.parent)
+
+    @property
     def global_metadata(self) -> Dict[str, Any]:
         return self.root_node._global_metadata
 
