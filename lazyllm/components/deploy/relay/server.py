@@ -39,7 +39,10 @@ parser.add_argument("--pythonpath")
 args = parser.parse_args()
 
 async def general_exception_handler(request: Request, e: Exception):
-    LOG.exception(f"异常堆栈数据: {e}")
+    import traceback
+    LOG.error(
+        f"Unhandled exception: {str(e)}\n{traceback.format_exc()}"
+    )
     return JSONResponse(
         status_code=500,
         content={"code": 500, "msg": str(e)},
