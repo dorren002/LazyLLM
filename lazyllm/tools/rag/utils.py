@@ -130,6 +130,9 @@ class DocListManager(ABC):
     @abstractmethod
     def update_kb_group_file_status(self, file_ids: Union[str, List[str]],
                                     status: str, group: Optional[str] = None): pass
+    
+    @abstractmethod
+    def get_kb_group_file_status(self, group: str, file_id: str): pass
 
     @abstractmethod
     def release(self): pass
@@ -363,6 +366,19 @@ class SqliteDocListManager(DocListManager):
         with self._db_lock, sqlite3.connect(self._db_path, check_same_thread=self._check_same_thread) as conn:
             conn.execute(query, (params + file_ids))
             conn.commit()
+    
+    def get_kb_group_file_status(self, group: str, file_id: str):
+        # 构建查询语句和参数
+        query = 'SELECT status FROM kb_group_documents WHERE group_name = ? AND doc_id = ?'
+        params = [group, file_id]
+
+        # 执行查询
+        with self._db_lock, sqlite3.connect(self._db_path, check_same_thread=self._check_same_thread) as conn:
+            cursor = conn.execute(query, params)
+            result = cursor.fetchone()  # 获取查询结果的第一行
+
+        # 提取查询结果
+        return result[0] if result else None
 
     def release(self):
         with self._db_lock, sqlite3.connect(self._db_path, check_same_thread=self._check_same_thread) as conn:

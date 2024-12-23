@@ -87,17 +87,44 @@ class DocImpl:
             raise ValueError(f'store type [{type(self.store)}] is not a dict.')
 
         if not self.store.is_group_active(LAZY_ROOT_NAME):
-            ids, paths, metadatas = self._list_files()
-            if paths:
-                root_nodes = self._reader.load_data(paths)
-                for idx, node in enumerate(root_nodes):
-                    node.global_metadata.update(metadatas[idx].copy() if metadatas else {})
-                    node.global_metadata[RAG_DOC_ID] = ids[idx] if ids else gen_docid(paths[idx])
-                    node.global_metadata[RAG_DOC_PATH] = paths[idx]
-                self.store.update_nodes(root_nodes)
+            ids, paths, metadatas = self._list_files(
+                status=DocListManager.Status.waiting,
+                upload_status=DocListManager.Status.success
+            )
+            if ids and self._dlm:
                 if self._dlm: self._dlm.update_kb_group_file_status(
-                    ids, DocListManager.Status.success, group=self._kb_group_name)
-                LOG.debug(f"building {LAZY_ROOT_NAME} nodes: {root_nodes}")
+                    ids, DocListManager.Status.working,
+                    group=self._kb_group_name
+                )
+            for idx, path in enumerate(paths):
+                try:
+                    doc_id = ids[idx] if ids else gen_docid(path)
+
+                    if self._dlm:
+                        current_status = self._dlm.get_kb_group_file_status(group=self._kb_group_name, file_id=ids[idx])
+                        if current_status != DocListManager.Status.working:
+                            LOG.warning(f"Skip file {path} because it is not in status {DocListManager.Status.working}"
+                                        f"current status is {current_status}")
+                            continue
+                    
+                    metadata = metadatas[idx].copy() if metadatas else {}
+                    root_nodes = self._reader.load_data([path])
+                    for _, node in enumerate(root_nodes):
+                        node.global_metadata.update(metadata)
+                        node.global_metadata[RAG_DOC_ID] = doc_id
+                        node.global_metadata[RAG_DOC_PATH] = path
+                    self.store.update_nodes(root_nodes)
+
+                    if self._dlm: self._dlm.update_kb_group_file_status(
+                        doc_id, DocListManager.Status.success, group=self._kb_group_name)
+                except Exception as e:
+                    # 当前文件解析失败，记录失败状态
+                    doc_id = ids[idx] if ids else gen_docid(path)
+                    LOG.error(f"[_lazy_init] Error loading [file={doc_id}] [path={path}]: {e}")
+                    if self._dlm: self._dlm.update_kb_group_file_status(
+                        doc_id, DocListManager.Status.failed, group=self._kb_group_name)
+                    continue
+            # LOG.debug(f"building {LAZY_ROOT_NAME} nodes: {root_nodes}")
 
         if self._dlm:
             self._daemon = threading.Thread(target=self.worker)
@@ -235,7 +262,6 @@ class DocImpl:
             if files:
                 self._dlm.update_kb_group_file_status(ids, DocListManager.Status.working, group=self._kb_group_name)
                 self._add_files(input_files=files, ids=ids, metadatas=metadatas)
-                self._dlm.update_kb_group_file_status(ids, DocListManager.Status.success, group=self._kb_group_name)
                 continue
             time.sleep(10)
 
@@ -256,22 +282,35 @@ class DocImpl:
                    metadatas: Optional[List[Dict[str, Any]]] = None):
         if not input_files:
             return
-        root_nodes = self._reader.load_data(input_files)
-        for idx, node in enumerate(root_nodes):
-            node.global_metadata = metadatas[idx].copy() if metadatas else {}
-            node.global_metadata[RAG_DOC_ID] = ids[idx] if ids else gen_docid(input_files[idx])
-            node.global_metadata[RAG_DOC_PATH] = input_files[idx]
-        temp_store = self._create_store({"type": "map"})
-        temp_store.update_nodes(root_nodes)
-        all_groups = self.store.all_groups()
-        LOG.info(f"add_files: Trying to merge store with {all_groups}")
-        for group in all_groups:
-            if group != LAZY_ROOT_NAME and not self.store.is_group_active(group):
-                continue
-            # Duplicate group will be discarded automatically
-            nodes = self._get_nodes(group, temp_store)
-            self.store.update_nodes(nodes)
-            LOG.debug(f"Merge {group} with {nodes}")
+        for idx, input_file in enumerate(input_files):
+            try:
+                current_status = self._dlm.get_kb_group_file_status(group=self._kb_group_name, file_id=ids[idx])
+                if current_status != DocListManager.Status.working:
+                    LOG.warning(f"Skip file {input_file} because it is not in status {DocListManager.Status.working}"
+                                f"current status is {current_status}")
+                    continue
+
+                root_nodes = self._reader.load_data([input_file])
+                for _, node in enumerate(root_nodes):
+                    node.global_metadata = metadatas[idx].copy() if metadatas else {}
+                    node.global_metadata[RAG_DOC_ID] = ids[idx] if ids else gen_docid(input_file)
+                    node.global_metadata[RAG_DOC_PATH] = input_file
+                temp_store = self._create_store({"type": "map"})
+                temp_store.update_nodes(root_nodes)
+                all_groups = self.store.all_groups()
+                LOG.info(f"add_files: Trying to merge store with {all_groups}")
+                for group in all_groups:
+                    if group != LAZY_ROOT_NAME and not self.store.is_group_active(group):
+                        continue
+                    # Duplicate group will be discarded automatically
+                    nodes = self._get_nodes(group, temp_store)
+                    self.store.update_nodes(nodes)
+                    LOG.debug(f"Merge {group} with {nodes}")
+                
+                self._dlm.update_kb_group_file_status(ids[idx], DocListManager.Status.success, group=self._kb_group_name)
+            except Exception as e:
+                LOG.error(f"_add_files: Failed to add file {input_file} with error {e}")
+                self._dlm.update_kb_group_file_status(ids[idx], DocListManager.Status.failed, group=self._kb_group_name)
 
     def _delete_files(self, input_files: List[str]) -> None:
         docs = self.store.get_index(type='file_node_map').query(input_files)
