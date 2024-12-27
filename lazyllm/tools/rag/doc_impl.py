@@ -87,10 +87,7 @@ class DocImpl:
             raise ValueError(f'store type [{type(self.store)}] is not a dict.')
 
         if not self.store.is_group_active(LAZY_ROOT_NAME):
-            ids, paths, metadatas = self._list_files(
-                status=DocListManager.Status.waiting,
-                upload_status=DocListManager.Status.success
-            )
+            ids, paths, metadatas = self._list_files()
             if ids and self._dlm:
                 if self._dlm: self._dlm.update_kb_group_file_status(
                     ids, DocListManager.Status.working,
@@ -274,7 +271,7 @@ class DocImpl:
             if files:
                 self._dlm.update_kb_group_file_status(ids, DocListManager.Status.working, group=self._kb_group_name)
                 self._add_files(input_files=files, ids=ids, metadatas=metadatas)
-                self._dlm.update_kb_group_file_status(ids, DocListManager.Status.success, group=self._kb_group_name)
+                # self._dlm.update_kb_group_file_status(ids, DocListManager.Status.success, group=self._kb_group_name)
                 time.sleep(3)
                 continue
             time.sleep(10)
