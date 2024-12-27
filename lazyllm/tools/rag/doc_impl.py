@@ -112,8 +112,12 @@ class DocImpl:
                         node.global_metadata[RAG_DOC_PATH] = path
                     self.store.update_nodes(root_nodes)
 
-                    if self._dlm: self._dlm.update_kb_group_file_status(
-                        doc_id, DocListManager.Status.success, group=self._kb_group_name)
+                    if self._dlm: 
+                        current_status = self._dlm.get_kb_group_file_status(group=self._kb_group_name, file_id=ids[idx])
+                        if current_status == DocListManager.Status.working:
+                            self._dlm.update_kb_group_file_status(
+                            doc_id, DocListManager.Status.success, group=self._kb_group_name
+                        )
                 except Exception as e:
                     # 当前文件解析失败，记录失败状态
                     doc_id = ids[idx] if ids else gen_docid(path)
@@ -295,6 +299,7 @@ class DocImpl:
             return
         for idx, input_file in enumerate(input_files):
             try:
+                # check status, if status is not working, skip
                 current_status = self._dlm.get_kb_group_file_status(group=self._kb_group_name, file_id=ids[idx])
                 if current_status != DocListManager.Status.working:
                     LOG.warning(f"Skip file {input_file} because it is not in status {DocListManager.Status.working}"
@@ -318,7 +323,10 @@ class DocImpl:
                     self.store.update_nodes(nodes)
                     LOG.debug(f"Merge {group} with {nodes}")
                 
-                self._dlm.update_kb_group_file_status(ids[idx], DocListManager.Status.success, group=self._kb_group_name)
+                # double check status, if status is not working(deleting for example), skip
+                current_status = self._dlm.get_kb_group_file_status(group=self._kb_group_name, file_id=ids[idx])
+                if current_status == DocListManager.Status.working:
+                    self._dlm.update_kb_group_file_status(ids[idx], DocListManager.Status.success, group=self._kb_group_name)
             except Exception as e:
                 LOG.error(f"_add_files: Failed to add file {input_file} with error {e}")
                 self._dlm.update_kb_group_file_status(ids[idx], DocListManager.Status.failed, group=self._kb_group_name)
