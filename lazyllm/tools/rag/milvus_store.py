@@ -1,4 +1,6 @@
 import copy
+from itertools import groupby
+from operator import attrgetter
 from typing import Dict, List, Optional, Union, Callable, Set
 from lazyllm.thirdparty import pymilvus
 from .doc_node import DocNode
@@ -156,13 +158,11 @@ class MilvusStore(StoreBase):
 
     @override
     def update_nodes(self, nodes: List[DocNode]) -> None:
-        for node in nodes:
-            embed_keys = self._group_embed_keys.get(node._group)
-            if embed_keys:
-                parallel_do_embedding(self._embed, embed_keys, [node])
-            data = self._serialize_node_partial(node)
-            self._client.upsert(collection_name=node._group, data=[data])
-
+        parallel_do_embedding(self._embed, self._group_embed_keys, nodes)
+        nodes_sorted = sorted(nodes, key=attrgetter('_group'))
+        for group, group_nodes in groupby(nodes_sorted, key=attrgetter('_group')):
+            group_data = [self._serialize_node_partial(node) for node in group_nodes]
+            self._client.upsert(collection_name=group, data=group_data)
         self._map_store.update_nodes(nodes)
 
     @override
