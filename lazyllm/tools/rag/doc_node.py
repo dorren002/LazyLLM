@@ -82,6 +82,10 @@ class DocNode:
         while root and root.parent:
             root = root.parent
         return root or self
+    
+    @property
+    def is_root_node(self) -> bool:
+        return (not self.parent)
 
     @property
     def is_root_node(self) -> bool:
@@ -94,8 +98,9 @@ class DocNode:
     @global_metadata.setter
     def global_metadata(self, global_metadata: Dict) -> None:
         if self.parent:
-            raise ValueError("only root node can set global metadata.")
-        self._global_metadata = global_metadata
+            self.root_node._global_metadata = global_metadata
+        else:
+            self._global_metadata = global_metadata
 
     @property
     def metadata(self) -> Dict:
