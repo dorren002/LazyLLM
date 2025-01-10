@@ -69,7 +69,7 @@ class KBGroup(KBDataBase):
     group_id = Column(sqlalchemy.Integer, primary_key=True, autoincrement=True)
     group_name = Column(sqlalchemy.String, nullable=False, unique=True)
 
-
+GroupDocPartRow = Row
 class KBGroupDocuments(KBDataBase):
     __tablename__ = "kb_group_documents"
 
@@ -102,8 +102,6 @@ class DocListManager(ABC):
         deleting = 'deleting'
         deleted = 'deleted'
 
-    DELETE_SAFE_STATUS_LIST = [Status.waiting, Status.success, Status.failed]
-
     def __init__(self, path, name):
         self._path = path
         self._name = name
@@ -129,11 +127,8 @@ class DocListManager(ABC):
         return self
 
     def delete_files(self, file_ids: List[str]) -> List[DocPartRow]:
-        document_list = self.update_file_status(
-            file_ids, DocListManager.Status.deleting, self.DELETE_SAFE_STATUS_LIST
-        )
-        safe_delete_ids = [doc.doc_id for doc in document_list]
-        self.update_kb_group_file_status(file_ids=safe_delete_ids, status=DocListManager.Status.deleting)
+        document_list = self.update_file_status(file_ids, DocListManager.Status.deleting)
+        self.update_kb_group(cond_file_ids=file_ids, new_status=DocListManager.Status.deleting)
         return document_list
 
     @abstractmethod
@@ -209,11 +204,9 @@ class DocListManager(ABC):
     def get_file_status(self, fileid: str): pass
 
     @abstractmethod
-    def update_kb_group_file_status(self, file_ids: Union[str, List[str]],
-                                    status: str, group: Optional[str] = None): pass
-    
-    @abstractmethod
-    def get_kb_group_file_status(self, group: str, file_id: str): pass
+    def update_kb_group(self, cond_file_ids: List[str], cond_group: Optional[str] = None,
+                        cond_status_list: Optional[List[str]] = None, new_status: Optional[str] = None,
+                        new_need_reparse: Optional[bool] = None) -> List[GroupDocPartRow]: pass
 
     @abstractmethod
     def release(self): pass
@@ -512,29 +505,37 @@ class SqliteDocListManager(DocListManager):
             cursor = conn.execute("SELECT status FROM documents WHERE doc_id = ?", (fileid,))
         return cursor.fetchone()
 
-    def update_kb_group_file_status(self, file_ids: Union[str, List[str]], status: str, group: Optional[str] = None):
-        if isinstance(file_ids, str): file_ids = [file_ids]
-        query, params = 'UPDATE kb_group_documents SET status = ? WHERE ', [status]
-        if group:
-            query += 'group_name = ? AND '
-            params.append(group)
-        query += f'doc_id IN ({",".join("?" * len(file_ids))})'
-        with self._db_lock, sqlite3.connect(self._db_path, check_same_thread=self._check_same_thread) as conn:
-            conn.execute(query, (params + file_ids))
-            conn.commit()
-    
-    def get_kb_group_file_status(self, group: str, file_id: str):
-        # 构建查询语句和参数
-        query = 'SELECT status FROM kb_group_documents WHERE group_name = ? AND doc_id = ?'
-        params = [group, file_id]
+    def update_kb_group(self, cond_file_ids: List[str], cond_group: Optional[str] = None,
+                        cond_status_list: Optional[List[str]] = None, new_status: Optional[str] = None,
+                        new_need_reparse: Optional[bool] = None) -> List[GroupDocPartRow]:
+        rows = []
+        conds = []
+        if not cond_file_ids:
+            return rows
+        conds.append(KBGroupDocuments.doc_id.in_(cond_file_ids))
+        if cond_group is not None:
+            conds.append(KBGroupDocuments.group_name == cond_group)
+        if cond_status_list:
+            conds.append(KBGroupDocuments.status.in_(cond_status_list))
 
-        # 执行查询
-        with self._db_lock, sqlite3.connect(self._db_path, check_same_thread=self._check_same_thread) as conn:
-            cursor = conn.execute(query, params)
-            result = cursor.fetchone()  # 获取查询结果的第一行
+        vals = {}
+        if new_status is not None:
+            vals[KBGroupDocuments.status.name] = new_status
+        if new_need_reparse is not None:
+            vals[KBGroupDocuments.need_reparse.name] = new_need_reparse
 
-        # 提取查询结果
-        return result[0] if result else None
+        if not vals:
+            return rows
+        with self._db_lock, self._Session() as session:
+            stmt = (
+                update(KBGroupDocuments)
+                .where(sqlalchemy.and_(*conds))
+                .values(vals)
+                .returning(KBGroupDocuments.doc_id, KBGroupDocuments.group_name, KBGroupDocuments.status)
+            )
+            rows = session.execute(stmt).fetchall()
+            session.commit()
+        return rows
 
     def release(self):
         with self._db_lock, sqlite3.connect(self._db_path, check_same_thread=self._check_same_thread) as conn:
@@ -679,15 +680,16 @@ def save_files_in_threads(
     return (already_exist_files, new_add_files, overwritten_files)
 
 # returns a list of modified nodes
-def parallel_do_embedding(embed: Dict[str, Callable], group_embed_keys: Dict[str, Set[str]], 
-                          nodes: List[DocNode]) -> List[DocNode]:
+def parallel_do_embedding(embed: Dict[str, Callable], embed_keys: Optional[Union[List[str], Set[str]]],
+                          nodes: List[DocNode], group_embed_keys: Dict[str, List[str]] = None) -> List[DocNode]:
     modified_nodes = []
     with ThreadPoolExecutor(config["max_embedding_workers"]) as executor:
         futures = []
         for node in nodes:
-            embed_keys = group_embed_keys.get(node._group)
-            if not embed_keys:
-                continue
+            if group_embed_keys:
+                embed_keys = group_embed_keys.get(node._group)
+                if not embed_keys:
+                    continue
             miss_keys = node.has_missing_embedding(embed_keys)
             if not miss_keys:
                 continue
