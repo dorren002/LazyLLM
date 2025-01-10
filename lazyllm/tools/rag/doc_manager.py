@@ -133,6 +133,15 @@ class DocManager(lazyllm.ModuleBase):
                     id_mapping[file] = None
 
             new_ids = self._manager.add_files(new_files, metadatas=new_metadatas, status=DocListManager.Status.success)
+
+            # TODO fix bug temperorary by transforming new_ids to list[str]
+            try:
+                for i in range(len(new_ids)):
+                    if not isinstance(new_ids[i], str):
+                        new_ids[i] = new_ids[i][0]
+            except Exception as e:
+                lazyllm.LOG.error(f'add_files exception: {e}')
+            
             if group_name:
                 self._manager.add_files_to_kb_group(new_ids + exist_ids, group=group_name)
 

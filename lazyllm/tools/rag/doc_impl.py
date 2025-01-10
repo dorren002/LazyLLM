@@ -88,17 +88,28 @@ class DocImpl:
 
         if not self.store.is_group_active(LAZY_ROOT_NAME):
             ids, paths, metadatas = self._list_files()
-            if paths:
-                if not metadatas: metadatas = [{}] * len(paths)
-                for idx, meta in enumerate(metadatas):
-                    meta[RAG_DOC_ID] = ids[idx] if ids else gen_docid(paths[idx])
-                    meta[RAG_DOC_PATH] = paths[idx]
-                root_nodes = self._reader.load_data(paths, metadatas)
-                self.store.update_nodes(root_nodes)
-                if self._dlm:
-                    self._dlm.update_kb_group(cond_file_ids=ids, cond_group=self._kb_group_name,
-                                              new_status=DocListManager.Status.success)
-                LOG.debug(f"building {LAZY_ROOT_NAME} nodes: {root_nodes}")
+            for idx, path in enumerate(paths):
+                doc_id = ids[idx] if ids else gen_docid(path)
+                try:
+                    metadata = metadatas[idx].copy() if metadatas else {}
+                    root_nodes = self._reader.load_data(input_files=[path])
+                    for _, node in enumerate(root_nodes):
+                        node.global_metadata.update(metadata)
+                        node.global_metadata[RAG_DOC_ID] = doc_id
+                        node.global_metadata[RAG_DOC_PATH] = path
+                    self.store.update_nodes(root_nodes)
+
+                    if self._dlm:
+                        self._dlm.update_kb_group(cond_file_ids=[doc_id], cond_group=self._kb_group_name,
+                                                  new_status=DocListManager.Status.success)
+                    LOG.debug(f"building {LAZY_ROOT_NAME} nodes: {root_nodes}")
+                except Exception as e:
+                    # 当前文件解析失败，记录失败状态
+                    LOG.error(f"[_lazy_init] Error loading [file={doc_id}] [path={path}]: {e}")
+                    if self._dlm: 
+                        self._dlm.update_kb_group(cond_file_ids=[doc_id], cond_group=self._kb_group_name,
+                                                  new_status=DocListManager.Status.failed)
+                    continue
 
         if self._dlm:
             self._daemon = threading.Thread(target=self.worker)
@@ -229,12 +240,18 @@ class DocImpl:
                 ids = [doc.doc_id for doc in docs]
                 metadatas = [doc.metadata for doc in docs]
                 # update status and need_reparse
-                self._dlm.update_kb_group(cond_file_ids=ids, cond_group=self._kb_group_name,
+                self._dlm.update_kb_group(cond_file_ids=ids, cond_group=self._kb_group_name, 
                                           new_status=DocListManager.Status.working, new_need_reparse=False)
                 self._delete_files(filepaths)
-                self._add_files(input_files=filepaths, ids=ids, metadatas=metadatas)
-                self._dlm.update_kb_group(cond_file_ids=ids, cond_group=self._kb_group_name,
-                                          new_status=DocListManager.Status.success)
+                for filepath, doc_id, metadata in zip(filepaths, ids, metadatas):
+                    try:
+                        self._add_files(input_files=[filepath], ids=[doc_id], metadatas=[metadata])
+                        self._dlm.update_kb_group(cond_file_ids=[doc_id], cond_group=self._kb_group_name, 
+                                                  new_status=DocListManager.Status.success)
+                    except Exception as e:
+                        LOG.error(f"_add_files: Failed to add file {filepath} with error {e}")
+                        self._dlm.update_kb_group(cond_file_ids=[doc_id], cond_group=self._kb_group_name, 
+                                                  new_status=DocListManager.Status.failed)
 
             ids, files, metadatas = self._list_files(status=DocListManager.Status.deleting)
             if files:
@@ -251,11 +268,17 @@ class DocImpl:
             if files:
                 self._dlm.update_kb_group(cond_file_ids=ids, cond_group=self._kb_group_name,
                                           new_status=DocListManager.Status.working)
-                self._add_files(input_files=files, ids=ids, metadatas=metadatas)
-                # change working to success while leaving other status unchanged
-                self._dlm.update_kb_group(cond_file_ids=ids, cond_group=self._kb_group_name,
-                                          cond_status_list=[DocListManager.Status.working],
-                                          new_status=DocListManager.Status.success)
+                for filepath, doc_id, metadata in zip(files, ids, metadatas):
+                    try:
+                        self._add_files(input_files=[filepath], ids=[doc_id], metadatas=[metadata])
+                        self._dlm.update_kb_group(cond_file_ids=[doc_id], cond_group=self._kb_group_name,
+                                                  cond_status_list=[DocListManager.Status.working], 
+                                                  new_status=DocListManager.Status.success)
+                    except Exception as e:
+                        LOG.error(f"_add_files: Failed to add file {filepath} with error {e}")
+                        self._dlm.update_kb_group(cond_file_ids=[doc_id], cond_group=self._kb_group_name,
+                                                  cond_status_list=[DocListManager.Status.working], 
+                                                  new_status=DocListManager.Status.failed)
                 continue
             time.sleep(10)
 

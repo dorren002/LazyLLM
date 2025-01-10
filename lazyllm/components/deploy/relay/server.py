@@ -8,15 +8,18 @@ import inspect
 import traceback
 from types import GeneratorType
 from lazyllm import kwargs, package
-from lazyllm import FastapiApp, globals, decode_request
+from lazyllm import FastapiApp, globals, decode_request, LOG
 import pickle
 import codecs
 import asyncio
 from functools import partial
 
 from fastapi import FastAPI, Request
+from starlette.responses import JSONResponse
+from starlette.middleware.exceptions import ExceptionMiddleware
 from fastapi.responses import Response, StreamingResponse
 import requests
+
 
 # TODO(sunxiaoye): delete in the future
 lazyllm_module_dir = os.path.abspath(__file__)
@@ -35,6 +38,16 @@ parser.add_argument("--after_function")
 parser.add_argument("--pythonpath")
 args = parser.parse_args()
 
+async def general_exception_handler(request: Request, e: Exception):
+    import traceback
+    LOG.error(
+        f"Unhandled exception: {str(e)}\n{traceback.format_exc()}"
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"code": 500, "msg": str(e)},
+    )
+    
 def load_func(f):
     return cloudpickle.loads(base64.b64decode(f.encode('utf-8')))
 
@@ -49,6 +62,7 @@ if args.after_function:
 
 
 app = FastAPI()
+app.add_middleware(ExceptionMiddleware, handlers={Exception: general_exception_handler})
 FastapiApp.update()
 
 async def async_wrapper(func, *args, **kwargs):
