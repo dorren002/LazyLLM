@@ -1,4 +1,5 @@
 import copy
+from packaging import version
 from collections import defaultdict
 from typing import Dict, List, Optional, Union, Callable, Set
 from lazyllm.thirdparty import pymilvus
@@ -12,8 +13,10 @@ from .global_metadata import (GlobalMetadataDesc, RAG_DOC_ID, RAG_DOC_PATH, RAG_
                               RAG_DOC_LAST_MODIFIED_DATE, RAG_DOC_LAST_ACCESSED_DATE)
 from .data_type import DataType
 from lazyllm.common import override, obj2str, str2obj
+from lazyllm import LOG
 
 MILVUS_UPSERT_BATCH_SIZE = 500
+MILVUS_PAGINATION_OFFSET = 1000
 
 class MilvusStore(StoreBase):
     # we define these variables as members so that pymilvus is not imported until MilvusStore is instantiated.
@@ -245,13 +248,37 @@ class MilvusStore(StoreBase):
 
     def _load_all_nodes_to(self, store: StoreBase) -> None:
         uid2node = {}
+        current_version = version.parse(pymilvus.__version__)
+        use_iterator = current_version >= version.parse("2.4.11")
+        LOG.info(f'the current pymilvus version is {pymilvus.__version__}, use_iterator is {use_iterator}')
+        if not use_iterator:
+            LOG.warning('pymilvus version is lower than 2.4.11, we recommend to upgrade pymilvus to 2.4.11 to support larger data size')
+
         for group_name in self._client.list_collections():
-            results = self._client.query(collection_name=group_name,
-                                         filter=f'{self._primary_key} != ""')
-            for result in results:
-                node = self._deserialize_node_partial(result)
-                node._group = group_name
-                uid2node.setdefault(node._uid, node)
+            if use_iterator:
+                collection_desc = self._client.describe_collection(collection_name=group_name)
+                field_names = [field.get("name") for field in collection_desc.get('fields', [])]
+                iterator = self._client.query_iterator(
+                    collection_name=group_name,
+                    batch_size=MILVUS_PAGINATION_OFFSET,
+                    filter=f'{self._primary_key} != ""',
+                    output_fields=field_names
+                )
+                results = []
+                while True:
+                    result = iterator.next()
+                    if not result:
+                        iterator.close()
+                        break
+                    results += result
+                
+                for result in results:
+                    node = self._deserialize_node_partial(result)
+                    node._group = group_name
+                    uid2node.setdefault(node._uid, node)
+            else:
+                results = self._client.query(collection_name=group_name,
+                                filter=f'{self._primary_key} != ""')
 
         # construct DocNode::parent and DocNode::children
         for node in uid2node.values():
