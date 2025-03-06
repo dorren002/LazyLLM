@@ -137,7 +137,11 @@ def find_services(cls):
     if '__relay_services__' in cls.__dict__:
         for (method, path), (name, kw) in cls.__relay_services__.items():
             if getattr(func.__class__, name) is getattr(cls, name):
-                getattr(app, method)(path, **kw)(getattr(func, name))
+                if path:
+                    getattr(app, method)(path, **kw)(getattr(func, name))
+                else:
+                    getattr(app, method)(**kw)(getattr(func, name))
+
     for base in cls.__bases__:
         find_services(base)
 
