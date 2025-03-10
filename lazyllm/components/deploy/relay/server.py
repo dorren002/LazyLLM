@@ -13,6 +13,7 @@ import pickle
 import codecs
 import asyncio
 from functools import partial
+from fastapi.openapi.utils import get_openapi
 
 from fastapi import FastAPI, Request
 from starlette.responses import JSONResponse
@@ -146,6 +147,38 @@ def find_services(cls):
         find_services(base)
 
 find_services(func.__class__)
+
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    openapi_schema = get_openapi(
+        title="LazyLLM FastAPI",
+        version="1.0.0",
+        description="",
+        routes=app.routes,
+    )
+    openapi_schema.setdefault("components", {})
+    openapi_schema["components"].setdefault("securitySchemes", {})
+    openapi_schema["components"]["securitySchemes"]["bearerAuth"] = {
+        "type": "http",
+        "scheme": "bearer"
+    }
+
+    for path_item in openapi_schema["paths"].values():
+        for operation in path_item.values():
+            security = operation.setdefault("security", [])
+            if {"bearerAuth": []} not in security:
+                security.append({"bearerAuth": []})
+
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+ENABLE_BEARER_AUTH = os.environ.get("ENABLE_BEARER_AUTH", "false").lower() == "true"
+
+if ENABLE_BEARER_AUTH:
+    app.openapi = custom_openapi
 
 if __name__ == "__main__":
     uvicorn.run(app, host=args.open_ip, port=args.open_port)
