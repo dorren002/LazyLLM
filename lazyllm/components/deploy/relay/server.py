@@ -14,6 +14,7 @@ import codecs
 import asyncio
 from functools import partial
 from fastapi.openapi.utils import get_openapi
+import zlib
 
 from fastapi import FastAPI, Request
 from starlette.responses import JSONResponse
@@ -50,7 +51,7 @@ async def general_exception_handler(request: Request, e: Exception):
     )
     
 def load_func(f):
-    return cloudpickle.loads(base64.b64decode(f.encode('utf-8')))
+    return cloudpickle.loads(zlib.decompress(base64.b64decode(f.encode('utf-8'))))
 
 if args.pythonpath:
     sys.path.append(args.pythonpath)
