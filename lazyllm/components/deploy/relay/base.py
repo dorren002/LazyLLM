@@ -3,6 +3,7 @@ import random
 import base64
 import inspect
 import sys
+import zlib
 
 from lazyllm import launchers, LazyLLMCMD
 from ..base import LazyLLMDeployBase, verify_fastapi_func
@@ -19,7 +20,7 @@ def dump_func(f, old_value=None):
 
     f = old_value if f is None else f
     with env_helper():
-        return None if f is None else base64.b64encode(cloudpickle.dumps(f)).decode('utf-8')
+        return None if f is None else base64.b64encode(zlib.compress(cloudpickle.dumps(f))).decode('utf-8')
 
 
 class RelayServer(LazyLLMDeployBase):
